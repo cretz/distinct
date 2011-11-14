@@ -72,6 +72,43 @@ distinct._checkCircular = (object, circularList) ->
   for prevObject in circularList
     if object is prevObject
       throw new Error 'Circular reference found'
+      
+###*
+* Set a value for the given path. This only supports
+* single selectors (i.e. '/')
+* 
+* @param {Object} object The object
+* @param {String} path The path
+* @param {Object} value The value
+* @returns {boolean} Returns true if set, false otherwise
+###
+distinct.set = (object, path, value) ->
+  lastSlash = path.lastIndexOf '/'
+  lastPiece = path.substring lastSlash + 1
+  for piece in path.substring(0, lastSlash).split('/')
+    object = object[piece]
+    if not object? then return false
+  object[lastPiece] = value
+  return true
+      
+###*
+* Remove a value for the given path. This only supports
+* single selectors (i.e. '/')
+* 
+* @param {Object} object The object
+* @param {String} path The path
+* @returns {boolean} Returns true if removed, false otherwise
+###
+distinct.remove = (object, path) ->
+  lastSlash = path.lastIndexOf '/'
+  lastPiece = path.substring lastSlash + 1
+  for piece in path.substring(0, lastSlash).split('/')
+    object = object[piece]
+    if not object? then return false
+  if object.hasOwnProperty lastPiece
+    delete object[lastPiece]
+    return true
+  return false
 
 ###*
 * Return the difference between two objects. The results are returned
@@ -92,6 +129,12 @@ distinct.diff = (oldObject, newObject, changesUpTheTree) ->
   if not oldObject? or not newObject? then throw new Error 'oldObject or newObject can\'t be null'
   results = []
   distinct._diff oldObject, newObject, changesUpTheTree, '', 0, results
+  results.sort (a, b) ->
+    if a.depth > b.depth then return 1
+    if a.depth < b.depth then return -1
+    if a.path > b.path then return 1
+    if a.path < b.path then return -1
+    return 0
   return results
   
 distinct._diff = (oldObject, newObject, changesUpTheTree, selectorPrefix, depth, results) ->
@@ -139,5 +182,27 @@ distinct._diff = (oldObject, newObject, changesUpTheTree, selectorPrefix, depth,
       somethingChanged = true
   return somethingChanged
 
-distinct.applyDiff = (object, diff, eventObject, triggerUpTheTreeChanges) ->
-   
+###*
+* Apply a diff set to the given object. Note, this will skip any diff
+* objects that represent up-tree changes.
+* 
+* @param {Object} object The object
+* @param {Array} diffArray The array to apply
+* @param {Object} [eventObject] If specified, trigger() is called for
+*   each diff application with the first parameter as diffType + ':' +
+*   path and the second parameter as the diff object
+###
+distinct.applyDiff = (object, diffArray, eventObject) ->
+  for diff in diffArray
+    switch diff.diffType
+      when 'add'
+        if distinct.set object, diff.path, diff.newValue and eventObject?
+          eventObject.trigger 'add:' + diff.path, diff
+      when 'delete'
+        if distinct.remove object, diff.path and eventObject?
+          eventObject.trigger 'delete:' + diff.path, diff
+      else
+        # don't want the non-direct changes
+        if diff.hasOwnProperty 'newValue'
+          if distinct.set object, diff.path, diff.newValue and eventObject?
+            eventObject.trigger 'change:' + diff.path, diff 
